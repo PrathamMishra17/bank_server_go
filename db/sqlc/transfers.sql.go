@@ -10,16 +10,7 @@ import (
 	"database/sql"
 )
 
-const getTransfer = `-- name: GetTransfer :execresult
-SELECT id, from_account_id, to_account_id, amount, created_at FROM transfers 
-WHERE id = ? LIMIT 1
-`
-
-func (q *Queries) GetTransfer(ctx context.Context, id int32) (sql.Result, error) {
-	return q.db.ExecContext(ctx, getTransfer, id)
-}
-
-const transferAmount = `-- name: TransferAmount :execresult
+const createTransfer = `-- name: CreateTransfer :execresult
 INSERT INTO transfers(
     from_account_id,
     to_account_id,
@@ -27,17 +18,35 @@ INSERT INTO transfers(
 )VALUES(?,?,?)
 `
 
-type TransferAmountParams struct {
+type CreateTransferParams struct {
 	FromAccountID int32 `json:"from_account_id"`
 	ToAccountID   int32 `json:"to_account_id"`
 	Amount        int32 `json:"amount"`
 }
 
-func (q *Queries) TransferAmount(ctx context.Context, arg TransferAmountParams) (sql.Result, error) {
-	return q.db.ExecContext(ctx, transferAmount, arg.FromAccountID, arg.ToAccountID, arg.Amount)
+func (q *Queries) CreateTransfer(ctx context.Context, arg CreateTransferParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, createTransfer, arg.FromAccountID, arg.ToAccountID, arg.Amount)
 }
 
-const transferLists = `-- name: TransferLists :execresult
+const getTransfer = `-- name: GetTransfer :one
+SELECT id, from_account_id, to_account_id, amount, created_at FROM transfers 
+WHERE id = ? LIMIT 1
+`
+
+func (q *Queries) GetTransfer(ctx context.Context, id int32) (Transfer, error) {
+	row := q.db.QueryRowContext(ctx, getTransfer, id)
+	var i Transfer
+	err := row.Scan(
+		&i.ID,
+		&i.FromAccountID,
+		&i.ToAccountID,
+		&i.Amount,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const transferLists = `-- name: TransferLists :many
 SELECT id, from_account_id, to_account_id, amount, created_at FROM transfers
 WHERE from_account_id = ? OR 
 to_account_id = ?
@@ -53,11 +62,36 @@ type TransferListsParams struct {
 	Offset        int32 `json:"offset"`
 }
 
-func (q *Queries) TransferLists(ctx context.Context, arg TransferListsParams) (sql.Result, error) {
-	return q.db.ExecContext(ctx, transferLists,
+func (q *Queries) TransferLists(ctx context.Context, arg TransferListsParams) ([]Transfer, error) {
+	rows, err := q.db.QueryContext(ctx, transferLists,
 		arg.FromAccountID,
 		arg.ToAccountID,
 		arg.Limit,
 		arg.Offset,
 	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Transfer
+	for rows.Next() {
+		var i Transfer
+		if err := rows.Scan(
+			&i.ID,
+			&i.FromAccountID,
+			&i.ToAccountID,
+			&i.Amount,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
