@@ -4,7 +4,6 @@
 // 2. m.Run() runs all the actual unit tests
 // 2. Os.Exit(...) exists the test process with correct status code
 
-
 package db
 
 import (
@@ -22,18 +21,20 @@ const (
 )
 
 var testqueries *Queries
+var TestDB *sql.DB
 
 func TestMain(m *testing.M) {
 
 	// conn will have the pool of connections to MySql database
-	conn, err := sql.Open(dbdriver, dbsource)
+	var err error
+	TestDB, err = sql.Open(dbdriver, dbsource)
 
 	if err != nil {
 		log.Fatal("Error in opening the database", err)
 	}
 
 	// New function requires the pool of connection with the database
-	testqueries = New(conn)
+	testqueries = New(TestDB)
 
 	os.Exit(m.Run())
 

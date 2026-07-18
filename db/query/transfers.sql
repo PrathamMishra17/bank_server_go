@@ -5,6 +5,7 @@ INSERT INTO transfers(
     amount
 )VALUES(?,?,?);
 
+
 -- name: GetTransfer :one
 SELECT * FROM transfers 
 WHERE id = ? LIMIT 1;
