@@ -30,46 +30,45 @@ import (
 // we are using sql.DB instead of sql.Tx becaue store
 // is going to be in the memory by the start of the server till end
 // and sql.DB is will be in memory for permanent where as
-//sql.Tx lifespan is few milliseconds, it will immedietly closed
+// sql.Tx lifespan is few milliseconds, it will immedietly closed
 // after one transaction
-type Store struct{
+type Store struct {
 	*Queries
-	db *sql.DB 
+	db *sql.DB
 }
 
-// New store creates new store 
-func NewStore(db *sql.DB) *Store{
+// New store creates new store
+func NewStore(db *sql.DB) *Store {
 	return &Store{
-		db: db,
-		Queries: New(db),//New functions takes the db object and returns queries 
+		db:      db,
+		Queries: New(db), //New functions takes the db object and returns queries
 	}
-} 
- 
+}
 
-//execTx executes a function within a database transaction
-func (store *Store) execTx(ctx context.Context, fn func(*Queries)error) error{
-	// This function core motive is to check if there is any 
-	// error in executing any query then rollback do not write 
+// execTx executes a function within a database transaction
+func (store *Store) execTx(ctx context.Context, fn func(*Queries) error) error {
+	// This function core motive is to check if there is any
+	// error in executing any query then rollback do not write
 	// anything (rollback) otherwise commit (write in db)
 
-	tx, err := store.db.BeginTx(ctx, nil) 
-	// this tells the db that we are going to execute some unit 
-	// of db operations(Transaction) do not write anything in table 
+	tx, err := store.db.BeginTx(ctx, nil)
+	// this tells the db that we are going to execute some unit
+	// of db operations(Transaction) do not write anything in table
 	// until all op. are done
 
-	if err != nil{
+	if err != nil {
 		return err
 	}
 
 	//passing the query to check is there any error in query
 
-	q:= New(tx)
+	q := New(tx)
 	err = fn(q)
 
 	if err != nil {
 		// rollback and check is there any error in rollback
 		rbErr := tx.Rollback()
-		if rbErr != nil{
+		if rbErr != nil {
 			return fmt.Errorf("txErr %v rbErr %v", err, rbErr)
 		}
 		return err
@@ -80,83 +79,140 @@ func (store *Store) execTx(ctx context.Context, fn func(*Queries)error) error{
 
 }
 
-type TransferTxParams struct{
+type TransferTxParams struct {
 	FromAccountId int64 `json:"from_account_id"`
-	ToAccountId int64 `json:"to_account_id"`
-	Amount       int64 `json:"amount"`
+	ToAccountId   int64 `json:"to_account_id"`
+	Amount        int64 `json:"amount"`
 }
 
 // TransferTxResult is the result of the transfer transaction
-type TransferTxResult struct{
-	Transfer Transfer `json:"transfer"`
-	FromAccount Account `json:"from_account"`
-	ToAccount Account `json:"to_account"`
-	FromEntry Entry `json:"from_entry"` //entry of the account which records money is moving out
-	ToEntry Entry `json:"to_entry"` //entry of the account which records money is moving in
+type TransferTxResult struct {
+	Transfer    Transfer `json:"transfer"`
+	FromAccount Account  `json:"from_account"`
+	ToAccount   Account  `json:"to_account"`
+	FromEntry   Entry    `json:"from_entry"` //entry of the account which records money is moving out
+	ToEntry     Entry    `json:"to_entry"`   //entry of the account which records money is moving in
 }
 
-//This TransferTx function perform amount transfer from acc1 to acc2 includes transfer record,
+// This TransferTx function perform amount transfer from acc1 to acc2 includes transfer record,
 // account entry for both accounts , amount adjustments in both account in a transaction
-func (store *Store) TransferTx(ctx context.Context, arg TransferTxParams ) (TransferTxResult, error){
+type txkey struct{}
+
+// second bracket says we are creating a new empty object of that type
+
+func (store *Store) TransferTx(ctx context.Context, arg TransferTxParams) (TransferTxResult, error) {
 	var result TransferTxResult
 
 	err := store.execTx(ctx, func(q *Queries) error {
+
+		txname := ctx.Value(txkey{})
+		if arg.FromAccountId < arg.ToAccountId {
+
+			var err error
+			result.FromAccount, result.ToAccount, err = addMoney(ctx, int32(arg.FromAccountId), int32(arg.ToAccountId), int(-arg.Amount), int(arg.Amount), q)
+			if err != nil {
+				return err
+			}
+
+		} else {
+
+			var err error
+			result.ToAccount, result.FromAccount, err = addMoney(ctx, int32(arg.ToAccountId), int32(arg.FromAccountId), int(arg.Amount), int(-arg.Amount), q)
+			if err != nil {
+				return err
+			}
+
+		}
+
 		//create the transfer
-		transferCreateResult , err := q.CreateTransfer(ctx, CreateTransferParams{
+
+		fmt.Println(txname, "createtransfer")
+		transferCreateResult, err := q.CreateTransfer(ctx, CreateTransferParams{
 			FromAccountID: int32(arg.FromAccountId),
-			ToAccountID: int32(arg.ToAccountId),
-			Amount: int32(arg.Amount),
+			ToAccountID:   int32(arg.ToAccountId),
+			Amount:        int32(arg.Amount),
 		})
-		if err != nil{
+		if err != nil {
 			return fmt.Errorf("Error %v in creating transfer", err)
-		}		
+		}
 		transferId, err := transferCreateResult.LastInsertId()
-		if err != nil{
+		if err != nil {
 			return err
 		}
-		
+		fmt.Println(txname, "GetTransfer")
 		result.Transfer, err = q.GetTransfer(ctx, int32(transferId))
-		
-		fromEntryResult , err := q.CreateEntry(ctx, CreateEntryParams{
+
+		fmt.Println(txname, "CreateFromEntry")
+		fromEntryResult, err := q.CreateEntry(ctx, CreateEntryParams{
 			AccountID: int32(arg.FromAccountId),
-			Amount: int32(-arg.Amount),
+			Amount:    int32(-arg.Amount),
 		})
 
 		if err != nil {
 			return err
 		}
 
-		fromEntryId , err := fromEntryResult.LastInsertId()
-		if err != nil{
+		fromEntryId, err := fromEntryResult.LastInsertId()
+		if err != nil {
 			return err
 		}
 
-		result.FromEntry , err = q.GetEntry(ctx, int32(fromEntryId))
-
+		result.FromEntry, err = q.GetEntry(ctx, int32(fromEntryId))
+		fmt.Println(txname, "CreateToEntry")
 		toEntryResult, err := q.CreateEntry(ctx, CreateEntryParams{
 			AccountID: int32(arg.ToAccountId),
-			Amount: int32(+arg.Amount),
+			Amount:    int32(+arg.Amount),
 		})
 
-		if(err != nil){
+		if err != nil {
 			return err
 		}
 
 		toEntryId, err := toEntryResult.LastInsertId()
 
-		if err != nil{
+		if err != nil {
 			return err
 		}
 
 		result.ToEntry, err = q.GetEntry(ctx, int32(toEntryId))
 
-		// TODO: update account balance
+		if err != nil {
+			return err
+		}
 
+		//fetch the account
 
-		
 		return nil
 	})
 	return result, err
 }
 
+// this function performs the addition and removal of money from account
+func addMoney(
+	context context.Context,
+	accountID1 int32,
+	accountID2 int32,
+	amount1 int,
+	amount2 int,
+	q *Queries,
+) (account1 Account, account2 Account, errs error) {
+	_, err := q.AddBalanceAccount(context, AddBalanceAccountParams{
+		Amount: int32(amount1),
+		ID:     accountID1,
+	})
 
+	if err != nil {
+		return
+	}
+
+	_, err = q.AddBalanceAccount(context, AddBalanceAccountParams{
+		Amount: int32(amount2),
+		ID:     accountID2,
+	})
+
+	account1, errs = q.GetAccount(context, accountID1)
+	account2, errs = q.GetAccount(context, accountID2)
+
+	return
+
+}
