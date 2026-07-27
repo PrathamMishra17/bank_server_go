@@ -15,7 +15,7 @@ jobs:
         image: mysql:latest
         env:
           MYSQL_ROOT_PASSWORD: password
-          MYSQL_DATABASE: test_db
+          MYSQL_DATABASE: simple_bank
         ports:
           - 3307:3306
         options: >-
@@ -31,7 +31,8 @@ jobs:
       - name: Install golang-migrate
         run: |
           curl -L https://github.com/golang-migrate/migrate/releases/download/v4.18.3/migrate.linux-amd64.tar.gz | tar xvz
-          sudo mv migrate /usr/local/bin/
+          sudo mv migrate /usr/local/bin/migrate
+          which migrate
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -41,7 +42,7 @@ jobs:
       
       - name: Run Database Migrations
         run: |
-          migrate -path db/migration -database "mysql://root:password@tcp(127.0.0.1:3307)/test_db" -verbose up
+          migrate -path db/migration -database "mysql://root:password@tcp(127.0.0.1:3307)/simple_bank" -verbose up
 
       
       - name: Test
