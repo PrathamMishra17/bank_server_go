@@ -1,0 +1,47 @@
+name: ci-test
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:latest
+        env:
+          MYSQL_ROOT_PASSWORD: password
+          MYSQL_DATABASE: test_db
+        ports:
+          - 3307:3306
+        options: >-
+          --health-cmd="mysqladmin ping -ppassword"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.20'
+
+      - name: Verify MySQL Connection
+        run: |
+          sudo apt-get update && sudo apt-get install -y mysql-client
+          mysql --host 127.0.0.1 --port 3307 -u root -ppassword -e "SHOW DATABASES;"
+
+      - name: Test
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3307
+          DB_USER: root
+          DB_PASSWORD: password
+          DB_NAME: test_db
+        run: make test
