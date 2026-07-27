@@ -37,6 +37,9 @@ jobs:
           sudo apt-get update && sudo apt-get install -y mysql-client
           mysql --host 127.0.0.1 --port 3307 -u root -ppassword -e "SHOW DATABASES;"
 
+      - name: Run Migrations
+        run: make migrate-up
+
       - name: Test
         env:
           DB_HOST: 127.0.0.1
